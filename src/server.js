@@ -1,7 +1,6 @@
 const express = require("express");
 
-const { getLinks } = require('./utils/linksUtils');
-const { differenceInSet } = require('./utils/setUtils');
+const {getLinksObject} = require('./utils/linksUtils');
 
 const app = express();
 
@@ -9,25 +8,36 @@ app.use(express.urlencoded({extended: true}))
 app.use(express.json());
 
 app.post("/parse", async function (request, response) {
-    let links = new Set();
-    let fetchedLinks = new Set();
 
-    const arrayLinks = await getLinks(request.body.domainName);
-    arrayLinks.forEach(value => links.add(value));
-    fetchedLinks.add(request.body.domainName);
+    const firstLink = request.body.domainName;
+    let links = [];
 
-    while (differenceInSet(links, fetchedLinks).length !== 0) {
-        const linkToFetch = differenceInSet(links, fetchedLinks)[0];
-        const arrayLinks = await getLinks(linkToFetch);
-        if(arrayLinks){
-            arrayLinks.forEach(value => links.add(value));
-        }
-        fetchedLinks.add(linkToFetch);
+    const arrayLinks = await getLinksObject(firstLink);
+    arrayLinks.forEach(value => links.push(value));
+    while (links.some((value) => value.watched === false)) {
+        const linkToFetchIndex = links.findIndex((value) => value.watched === false);
+        const linksToAdd = await getLinksObject(links[linkToFetchIndex].urlToFetch);
+        links[linkToFetchIndex].watched = true;
+        linksToAdd.forEach((linkToAdd) => {
+            if (!links.some((link) => link.urlToFetch === linkToAdd.urlToFetch) || !linkToAdd.urlToFetch) {
+                links.push(linkToAdd)
+            }
+        })
+
     }
 
-    response.send(Array.from(links));
+    //Bug почему то при вызове /v/e сохраняется статус 500, хотя его должны редиректить со статусом 200
+    // Либо баг, либо я что-то не допонял
+    const filteredLinksWithoutErrors = links.filter((link => link.status !== 404 && link.status !== 500 && link.urlParent !== firstLink))
+        .map((link) => link.urlParent);
+
+    const filteredLinksAll500 = links.filter((link => link.status === 500));
+    const filteredLinks500WithContent = filteredLinksAll500.filter((link) => link.urlToFetch).map((link) => link.urlParent);
+    // Избавляемся от дупликатов
+    const set = new Set(filteredLinksWithoutErrors.concat(filteredLinks500WithContent));
+
+    response.send(Array.from(set));
 });
 
 
 app.listen(3000);
-
